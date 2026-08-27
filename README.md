@@ -5,18 +5,18 @@ Paid API routes for [AWS Lambda Powertools Event Handler](https://docs.powertool
 ## Install
 
 ```bash
-npm install powertools-x402 @aws-lambda-powertools/event-handler @aws-lambda-powertools/metrics @x402/core @x402/evm
+npm install powertools-x402
 ```
 
-Requires Node 18+.
+Requires Node 18+. `@aws-lambda-powertools/event-handler` is a peer dependency, so npm will grab it automatically if your app doesn't already have it.
 
 ## What it does
 
-`x402.paid()` is route middleware that turns any route into a paid endpoint. The route owns the price; the handler stays pure business logic.
+`x402.paid()` is route middleware that turns any route into a paid endpoint. The route owns the price. Your handler stays pure business logic.
 
-- No payment attached → 402 response with signed payment requirements
-- Payment attached → verified with a facilitator before your handler runs
-- Settlement happens after your handler succeeds — a handler that throws or returns an error status is never charged
+- No payment attached? The caller gets a 402 with signed payment requirements
+- Payment attached? It gets verified with a facilitator before your handler runs
+- Settlement happens after your handler succeeds. If it throws or returns an error status, the caller is never charged
 - Verified payment details (payer, amount, network) are available in the request store
 
 ## Usage
@@ -72,7 +72,7 @@ const x402 = createX402({
 });
 ```
 
-Emits `PaymentRequired`, `PaymentRejected`, `PaymentVerified`, `PaymentSettled`, `PaymentCancelled`, and `SettlementFailed` counts under the `x402` namespace. Each metric is published immediately — no `publishStoredMetrics()` call needed. Pass your own `metrics` instance to change the namespace.
+This emits `PaymentRequired`, `PaymentRejected`, `PaymentVerified`, `PaymentSettled`, `PaymentCancelled`, and `SettlementFailed` counts under the `x402` namespace. Metrics publish immediately, so there's no `publishStoredMetrics()` call to remember. Pass your own `metrics` instance if you want a different namespace.
 
 ### Use an authenticated facilitator
 
@@ -101,7 +101,7 @@ x402.paid({
 });
 ```
 
-Register additional schemes (e.g. non-EVM networks) with the `schemes` option on `createX402`.
+Want to take payments on non-EVM networks? Register additional schemes with the `schemes` option on `createX402`.
 
 ### Let some callers through free
 
@@ -129,7 +129,7 @@ x402.paid({
 
 ### Test your routes without a network
 
-`facilitator` accepts any object with `verify`/`settle`/`getSupported`:
+The `facilitator` option takes any object with `verify`, `settle`, and `getSupported`, so your tests never touch the network:
 
 ```ts
 const facilitator = {
@@ -145,9 +145,11 @@ const facilitator = {
 const x402 = createX402({ facilitator, network: 'eip155:84532', payTo: '0xYou' });
 ```
 
-Drive your router with API Gateway events through `app.resolve(event, context)` — see [test/middleware.test.ts](test/middleware.test.ts) for full round trips, including client-side payment signing.
+Drive your router with API Gateway events through `app.resolve(event, context)`. Check out [test/middleware.test.ts](test/middleware.test.ts) for full round trips, including client-side payment signing.
 
 ### Pay for a request (client side)
+
+In the paying app, install `@x402/core`, `@x402/evm`, and `viem`:
 
 ```ts
 import { x402Client, x402HTTPClient } from '@x402/core/client';
@@ -170,13 +172,13 @@ const paid = await fetch(url, { method: 'POST', headers: client.encodePaymentSig
 const receipt = client.getPaymentSettleResponse((name) => paid.headers.get(name));
 ```
 
-Testnet USDC: [Circle faucet](https://faucet.circle.com/).
+Need testnet USDC? Grab some from the [Circle faucet](https://faucet.circle.com/).
 
 ## Examples
 
-- [example/handler.ts](example/handler.ts) — lambdalith with free and paid routes
-- [example/client.ts](example/client.ts) — paying client, step by step
-- [example/template.yaml](example/template.yaml) — SAM deploy (esbuild, ESM, HTTP API)
+- [example/handler.ts](example/handler.ts) - lambdalith with free and paid routes
+- [example/client.ts](example/client.ts) - paying client, step by step
+- [example/template.yaml](example/template.yaml) - SAM deploy (esbuild, ESM, HTTP API)
 
 ## License
 

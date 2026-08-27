@@ -26,8 +26,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # npm >= 11.5.1 exchanges the workflow's OIDC token with npm directly —
-      # no NPM_TOKEN secret; npmjs.com trusts this repo + workflow instead.
+      # npm >= 11.5.1 exchanges the workflow's OIDC token with npm directly.
+      # No NPM_TOKEN secret needed; npmjs.com trusts this repo + workflow instead.
       - run: npm install -g npm@latest
       - run: npm ci
       - name: Bump patch version unless the merge already set a new one

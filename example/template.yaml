@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Paid API using powertools-x402
+
+Parameters:
+  PayToAddress:
+    Type: String
+    Description: Address that receives payments
+
+Resources:
+  PaidApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        Banner:
+          - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+        Target: node22
+        Minify: true
+        EntryPoints:
+          - handler.ts
+    Properties:
+      CodeUri: .
+      Handler: handler.handler
+      Runtime: nodejs22.x
+      MemorySize: 512
+      Timeout: 29
+      Environment:
+        Variables:
+          PAY_TO: !Ref PayToAddress
+          POWERTOOLS_SERVICE_NAME: paid-api
+      Events:
+        Api:
+          Type: HttpApi
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com

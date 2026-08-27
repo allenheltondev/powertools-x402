@@ -50,6 +50,8 @@ app.post(
 export const handler = (event: unknown, context: Context) => app.resolve(event, context);
 ```
 
+Dollar prices settle in USDC on the route's network. `'$0.01'` on Base Sepolia charges 0.01 USDC.
+
 ### Read payment details in the handler
 
 ```ts
@@ -90,6 +92,51 @@ const x402 = createX402({
 });
 ```
 
+### Settle into your Stripe balance
+
+Stripe supports x402 through [machine payments](https://docs.stripe.com/payments/machine/x402). You point `payTo` at a Stripe crypto deposit address, settle through the Coinbase Developer Platform facilitator, and record each settled payment as a Stripe PaymentIntent. Funds land in your Stripe balance next to your card payments.
+
+```bash
+npm install stripe @coinbase/x402
+```
+
+```ts
+import { createFacilitatorConfig } from '@coinbase/x402';
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2026-05-27.preview' as Stripe.LatestApiVersion,
+});
+
+const x402 = createX402({
+  facilitator: createFacilitatorConfig(process.env.CDP_API_KEY_ID!, process.env.CDP_API_KEY_SECRET!),
+  network: 'eip155:8453', // Base mainnet
+  payTo: process.env.STRIPE_DEPOSIT_ADDRESS!, // POST /v1/crypto/deposit_addresses, one time
+});
+
+x402.resourceServer.onAfterSettle(async ({ result, requirements }) => {
+  if (!result.success || !result.transaction) return;
+  await stripe.paymentIntents.create(
+    {
+      amount: Math.round(Number(requirements.amount) / 10_000), // atomic USDC to cents
+      currency: 'usd',
+      confirm: true,
+      payment_method_data: { type: 'crypto' },
+      payment_method_types: ['crypto'],
+      payment_method_options: {
+        crypto: {
+          mode: 'transaction_verification',
+          transaction_verification_options: { network: 'base', transaction_hash: result.transaction },
+        } as Stripe.PaymentIntentCreateParams.PaymentMethodOptions.Crypto,
+      },
+    },
+    { idempotencyKey: result.transaction }
+  );
+});
+```
+
+Full working version in [example/stripe.ts](example/stripe.ts). Heads up: this uses Stripe's `2026-05-27.preview` API version, and you'll need the Stablecoins and Crypto payment method approved on your Stripe account.
+
 ### Accept multiple payment options on one route
 
 ```ts
@@ -102,6 +149,22 @@ x402.paid({
 ```
 
 Want to take payments on non-EVM networks? Register additional schemes with the `schemes` option on `createX402`.
+
+### Price in a specific token
+
+Dollar strings are shorthand for USDC. To pin the exact asset yourself, pass atomic units and the token address:
+
+```ts
+x402.paid({
+  price: {
+    amount: '10000', // atomic units, USDC has 6 decimals
+    asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC on Base Sepolia
+    extra: { name: 'USDC', version: '2' }, // EIP-712 domain the payer signs against
+  },
+});
+```
+
+The same shape works for any EIP-3009 token. Set `extra` to the token's EIP-712 domain.
 
 ### Let some callers through free
 
@@ -178,6 +241,7 @@ Need testnet USDC? Grab some from the [Circle faucet](https://faucet.circle.com/
 
 - [example/handler.ts](example/handler.ts) - lambdalith with free and paid routes
 - [example/client.ts](example/client.ts) - paying client, step by step
+- [example/stripe.ts](example/stripe.ts) - settle x402 payments into your Stripe balance
 - [example/template.yaml](example/template.yaml) - SAM deploy (esbuild, ESM, HTTP API)
 
 ## License

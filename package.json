@@ -1,6 +1,6 @@
 {
   "name": "powertools-x402",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "x402 payment middleware for AWS Lambda Powertools Event Handler",
   "license": "MIT",
   "author": "Allen Helton <allenheltondev@gmail.com>",

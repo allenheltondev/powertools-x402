@@ -94,6 +94,14 @@ export function createX402(options: CreateX402Options) {
     if (result.payer) payers.set(paymentPayload, result.payer);
   });
 
+  /**
+   * With the default exact payment flow, verifies payment before the handler
+   * and settles after it succeeds; handlers that throw or respond with an
+   * error status are not settled. Best suited to work that can safely run
+   * before settlement (inference, generation, retrieval): if the handler
+   * performs irreversible side effects and settlement then fails, the work
+   * has already happened.
+   */
   function paid(route: PaidRouteOptions): Middleware<X402Environment> {
     const { price, accepts, onProtectedRequest, ...routeConfig } = route;
     if (accepts === undefined && price === undefined) {

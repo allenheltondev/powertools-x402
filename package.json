@@ -30,6 +30,36 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./stripe": {
+      "import": {
+        "types": "./dist/stripe.d.ts",
+        "default": "./dist/stripe.js"
+      },
+      "require": {
+        "types": "./dist/stripe.d.cts",
+        "default": "./dist/stripe.cjs"
+      }
+    },
+    "./coinbase": {
+      "import": {
+        "types": "./dist/coinbase.d.ts",
+        "default": "./dist/coinbase.js"
+      },
+      "require": {
+        "types": "./dist/coinbase.d.cts",
+        "default": "./dist/coinbase.cjs"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      },
+      "require": {
+        "types": "./dist/testing.d.cts",
+        "default": "./dist/testing.cjs"
+      }
     }
   },
   "files": [
@@ -52,7 +82,21 @@
     "@x402/evm": "^2.23.0"
   },
   "peerDependencies": {
-    "@aws-lambda-powertools/event-handler": "^2.35.0"
+    "@aws-lambda-powertools/event-handler": "^2.35.0",
+    "@coinbase/x402": "^2.1.0",
+    "stripe": "^22.0.0",
+    "viem": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@coinbase/x402": {
+      "optional": true
+    },
+    "stripe": {
+      "optional": true
+    },
+    "viem": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@aws-lambda-powertools/event-handler": "^2.35.0",

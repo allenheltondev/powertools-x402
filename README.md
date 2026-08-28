@@ -76,66 +76,49 @@ const x402 = createX402({
 
 This emits `PaymentRequired`, `PaymentRejected`, `PaymentVerified`, `PaymentSettled`, `PaymentCancelled`, and `SettlementFailed` counts under the `x402` namespace. Metrics publish immediately, so there's no `publishStoredMetrics()` call to remember. Pass your own `metrics` instance if you want a different namespace.
 
-### Use an authenticated facilitator
+### Settle on mainnet with the Coinbase facilitator
+
+The free `x402.org` facilitator is testnet only. Mainnet payments settle through the [Coinbase Developer Platform](https://portal.cdp.coinbase.com/) facilitator:
+
+```bash
+npm install @coinbase/x402
+```
 
 ```ts
+import { coinbaseFacilitator } from 'powertools-x402/coinbase';
+
 const x402 = createX402({
-  facilitator: {
-    url: 'https://facilitator.example.com',
-    createAuthHeaders: async () => {
-      const headers = { Authorization: `Bearer ${token}` };
-      return { verify: headers, settle: headers, supported: headers };
-    },
-  },
+  facilitator: coinbaseFacilitator(), // reads CDP_API_KEY_ID and CDP_API_KEY_SECRET
   network: 'eip155:8453', // Base mainnet
   payTo: process.env.PAY_TO!,
 });
 ```
 
+Using a different facilitator? Pass `{ url, createAuthHeaders }` straight through the `facilitator` option.
+
 ### Settle into your Stripe balance
 
-Stripe supports x402 through [machine payments](https://docs.stripe.com/payments/machine/x402). You point `payTo` at a Stripe crypto deposit address, settle through the Coinbase Developer Platform facilitator, and record each settled payment as a Stripe PaymentIntent. Funds land in your Stripe balance next to your card payments.
+Stripe supports x402 through [machine payments](https://docs.stripe.com/payments/machine/x402). Payments settle through the Coinbase facilitator into a Stripe crypto deposit address, and each settled payment is recorded as a Stripe PaymentIntent. Funds land in your Stripe balance next to your card payments.
 
 ```bash
 npm install stripe @coinbase/x402
 ```
 
 ```ts
-import { createFacilitatorConfig } from '@coinbase/x402';
-import Stripe from 'stripe';
+import { createStripeX402 } from 'powertools-x402/stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2026-05-27.preview' as Stripe.LatestApiVersion,
-});
+// Reads STRIPE_SECRET_KEY, STRIPE_DEPOSIT_ADDRESS, CDP_API_KEY_ID, and CDP_API_KEY_SECRET
+const x402 = createStripeX402();
 
-const x402 = createX402({
-  facilitator: createFacilitatorConfig(process.env.CDP_API_KEY_ID!, process.env.CDP_API_KEY_SECRET!),
-  network: 'eip155:8453', // Base mainnet
-  payTo: process.env.STRIPE_DEPOSIT_ADDRESS!, // POST /v1/crypto/deposit_addresses, one time
-});
-
-x402.resourceServer.onAfterSettle(async ({ result, requirements }) => {
-  if (!result.success || !result.transaction) return;
-  await stripe.paymentIntents.create(
-    {
-      amount: Math.round(Number(requirements.amount) / 10_000), // atomic USDC to cents
-      currency: 'usd',
-      confirm: true,
-      payment_method_data: { type: 'crypto' },
-      payment_method_types: ['crypto'],
-      payment_method_options: {
-        crypto: {
-          mode: 'transaction_verification',
-          transaction_verification_options: { network: 'base', transaction_hash: result.transaction },
-        } as Stripe.PaymentIntentCreateParams.PaymentMethodOptions.Crypto,
-      },
-    },
-    { idempotencyKey: result.transaction }
-  );
-});
+app.post('/paid', [x402.paid({ price: '$0.01' })], async () => ({ foo: 'bar' }));
 ```
 
-Full working version in [example/stripe.ts](example/stripe.ts). Heads up: this uses Stripe's `2026-05-27.preview` API version, and you'll need the Stablecoins and Crypto payment method approved on your Stripe account.
+Prefer explicit config? Pass `depositAddress`, `stripeSecretKey` (or your own `stripe` client), and `cdpApiKeyId`/`cdpApiKeySecret` directly. Every other `createX402` option works here too.
+
+A couple things to know:
+
+- Create your deposit address once with `POST /v1/crypto/deposit_addresses` and store it. Keep that call off your request path.
+- This uses Stripe's `2026-05-27.preview` API version, and you'll need the Stablecoins and Crypto payment method approved on your Stripe account.
 
 ### Accept multiple payment options on one route
 
@@ -192,23 +175,25 @@ x402.paid({
 
 ### Test your routes without a network
 
-The `facilitator` option takes any object with `verify`, `settle`, and `getSupported`, so your tests never touch the network:
+Import from `powertools-x402/testing` and your tests never touch the network. `stubFacilitator()` approves every payment, and `testPayer()` signs real payments with a throwaway account so you can test the paid path end to end:
 
 ```ts
-const facilitator = {
-  getSupported: async () => ({
-    kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:84532' }],
-    extensions: [],
-    signers: {},
-  }),
-  verify: async () => ({ isValid: true, payer: '0xPayer' }),
-  settle: async () => ({ success: true, transaction: '0xTx', network: 'eip155:84532' }),
-};
+import { stubFacilitator, testPayer } from 'powertools-x402/testing';
 
-const x402 = createX402({ facilitator, network: 'eip155:84532', payTo: '0xYou' });
+const facilitator = stubFacilitator(); // defaults to Base Sepolia
+const x402 = createX402({
+  facilitator,
+  network: 'eip155:84532',
+  payTo: '0x209693Bc6afc0C5328bA36FaF03C514EF312287C',
+});
+
+// 402 challenge, then pay it and assert on your handler's behavior
+const payer = testPayer();
+const challenge = await app.resolve(event('POST', '/paid'), context);
+const paid = await app.resolve(event('POST', '/paid', await payer.payFor(challenge)), context);
 ```
 
-Drive your router with API Gateway events through `app.resolve(event, context)`. Check out [test/middleware.test.ts](test/middleware.test.ts) for full round trips, including client-side payment signing.
+Spy on `facilitator.verify` or `facilitator.settle` to assert calls or force failures. `payFor` also accepts fetch `Response` objects. And if you'd rather roll your own facilitator stub, it's any object with `verify`, `settle`, and `getSupported`.
 
 ### Pay for a request (client side)
 

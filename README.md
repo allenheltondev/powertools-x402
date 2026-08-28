@@ -16,10 +16,10 @@ Requires Node 18+. `@aws-lambda-powertools/event-handler` is a peer dependency, 
 
 - No payment attached? The caller gets a 402 with signed payment requirements
 - Payment attached? It gets verified with a facilitator before your handler runs
-- Settlement happens after your handler succeeds. If it throws or returns an error status, the caller is never charged
+- With the default exact payment flow, settlement happens after your handler succeeds. If the handler throws or returns an error status, settlement does not occur
 - Verified payment details (payer, amount, network) are available in the request store
 
-One contract to understand before you ship: verify happens before your handler, settlement happens after. That's the right fit for work that can safely run before the money moves, like inference, generation, and data retrieval. It is not a transaction around your business logic. If your handler performs an irreversible side effect and settlement fails afterward, the work already happened. Keep that kind of work reversible or reconcilable, or handle it with your own orchestration.
+One contract to understand before you ship: in the default exact flow, verify happens before your handler and settlement happens after. That's the right fit for work that can safely run before the money moves, like inference, generation, and data retrieval. It is not a transaction around your business logic. If your handler performs an irreversible side effect and settlement fails afterward, the work already happened. Keep that kind of work reversible or reconcilable, or handle it with your own orchestration.
 
 ## Usage
 

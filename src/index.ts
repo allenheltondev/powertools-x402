@@ -95,11 +95,12 @@ export function createX402(options: CreateX402Options) {
   });
 
   /**
-   * Verifies payment before the handler and settles after it succeeds. Best
-   * suited to work that can safely run before settlement (inference,
-   * generation, retrieval): if the handler performs irreversible side effects
-   * and settlement then fails, the work has already happened. Handlers that
-   * throw or respond with an error status are never settled.
+   * With the default exact payment flow, verifies payment before the handler
+   * and settles after it succeeds; handlers that throw or respond with an
+   * error status are not settled. Best suited to work that can safely run
+   * before settlement (inference, generation, retrieval): if the handler
+   * performs irreversible side effects and settlement then fails, the work
+   * has already happened.
    */
   function paid(route: PaidRouteOptions): Middleware<X402Environment> {
     const { price, accepts, onProtectedRequest, ...routeConfig } = route;

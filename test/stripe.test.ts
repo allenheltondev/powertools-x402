@@ -125,6 +125,27 @@ describe('createStripeX402', () => {
     );
   });
 
+  it('falls back to console.error for recording failures when no logger is configured', async () => {
+    const facilitator = stubFacilitator();
+    const stripe = fakeStripe();
+    stripe.paymentIntents.create.mockRejectedValue(new Error('stripe is down'));
+    const x402 = createStripeX402({ facilitator, stripe, depositAddress });
+    const app = new Router<X402Environment>();
+    app.post('/paid', [x402.paid({ price: '$0.01' })], async () => ({ foo: 'bar' }));
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const challenge = await app.resolve(apiGatewayEvent('POST', '/paid'), lambdaContext);
+    const paymentHeaders = await payFor(challenge);
+    const res = await app.resolve(apiGatewayEvent('POST', '/paid', paymentHeaders), lambdaContext);
+    consoleError.mockRestore();
+
+    expect(res.statusCode).toBe(200);
+    expect(consoleError).toHaveBeenCalledWith(
+      'stripe payment intent recording failed',
+      expect.objectContaining({ transaction: '0xtransactionhash', amountInCents: 1 })
+    );
+  });
+
   it('does not create a PaymentIntent when settlement fails', async () => {
     const { app, facilitator, stripe } = setup();
     facilitator.settle.mockResolvedValue({

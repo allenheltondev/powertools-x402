@@ -103,7 +103,7 @@ export function createStripeX402(options: StripeX402Options = {}) {
     } catch (error) {
       // The payment already settled on-chain. Never fail the request over a
       // recording error; log the transaction hash so it can be reconciled.
-      rest.logger?.error('stripe payment intent recording failed', {
+      (rest.logger ?? console).error('stripe payment intent recording failed', {
         transaction: result.transaction,
         amountInCents,
         error: error instanceof Error ? error.message : String(error),

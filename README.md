@@ -19,6 +19,8 @@ Requires Node 18+. `@aws-lambda-powertools/event-handler` is a peer dependency, 
 - Settlement happens after your handler succeeds. If it throws or returns an error status, the caller is never charged
 - Verified payment details (payer, amount, network) are available in the request store
 
+One contract to understand before you ship: verify happens before your handler, settlement happens after. That's the right fit for work that can safely run before the money moves, like inference, generation, and data retrieval. It is not a transaction around your business logic. If your handler performs an irreversible side effect and settlement fails afterward, the work already happened. Keep that kind of work reversible or reconcilable, or handle it with your own orchestration.
+
 ## Usage
 
 ### Charge for a route

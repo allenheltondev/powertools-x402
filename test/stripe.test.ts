@@ -103,6 +103,28 @@ describe('createStripeX402', () => {
     expect(paymentRequired.accepts[0].payTo.toLowerCase()).toBe(depositAddress.toLowerCase());
   });
 
+  it('still returns the paid response when Stripe recording fails', async () => {
+    const facilitator = stubFacilitator();
+    const stripe = fakeStripe();
+    stripe.paymentIntents.create.mockRejectedValue(new Error('stripe is down'));
+    const logger = { debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const x402 = createStripeX402({ facilitator, stripe, depositAddress, logger });
+    const app = new Router<X402Environment>();
+    app.post('/paid', [x402.paid({ price: '$0.01' })], async () => ({ foo: 'bar' }));
+
+    const challenge = await app.resolve(apiGatewayEvent('POST', '/paid'), lambdaContext);
+    const paymentHeaders = await payFor(challenge);
+    const res = await app.resolve(apiGatewayEvent('POST', '/paid', paymentHeaders), lambdaContext);
+
+    // The payment settled on-chain; a recording failure must not fail the request
+    expect(res.statusCode).toBe(200);
+    expect(res.headers?.['payment-response']).toBeDefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      'stripe payment intent recording failed',
+      expect.objectContaining({ transaction: '0xtransactionhash' })
+    );
+  });
+
   it('does not create a PaymentIntent when settlement fails', async () => {
     const { app, facilitator, stripe } = setup();
     facilitator.settle.mockResolvedValue({

@@ -24,13 +24,17 @@ export interface StripeX402Options
   cdpApiKeyId?: string;
   cdpApiKeySecret?: string;
   facilitator?: CreateX402Options['facilitator'];
-  network?: Network;
 }
 
 /**
  * x402 routes that settle into your Stripe balance: payments go to a Stripe
  * crypto deposit address via the Coinbase facilitator, and each settled
  * payment is recorded as a Stripe PaymentIntent (transaction_verification).
+ *
+ * Intentionally pinned to USDC on Base mainnet; the PaymentIntent recording
+ * assumes that network and asset. A failed recording never fails the request:
+ * the payment already settled on-chain, so the failure is logged with the
+ * transaction hash for reconciliation instead.
  */
 export function createStripeX402(options: StripeX402Options = {}) {
   const {
@@ -59,8 +63,8 @@ export function createStripeX402(options: StripeX402Options = {}) {
     });
 
   const x402 = createX402({
-    network: BASE_MAINNET,
     ...rest,
+    network: BASE_MAINNET,
     facilitator: facilitator ?? coinbaseFacilitator(cdpApiKeyId, cdpApiKeySecret),
     payTo: depositAddress,
   });
@@ -74,27 +78,37 @@ export function createStripeX402(options: StripeX402Options = {}) {
     const amountInCents = Math.round(Number(requirements.amount) / 10_000);
     if (amountInCents < 1) return;
 
-    await stripeClient.paymentIntents.create(
-      {
-        amount: amountInCents,
-        currency: 'usd',
-        confirm: true,
-        payment_method_data: { type: 'crypto' },
-        payment_method_types: ['crypto'],
-        payment_method_options: {
-          // transaction_verification ships in the 2026-05-27.preview API
-          // version and is not yet in stripe-node's stable types
-          crypto: {
-            mode: 'transaction_verification',
-            transaction_verification_options: {
-              network: 'base',
-              transaction_hash: result.transaction,
-            },
-          } as Stripe.PaymentIntentCreateParams.PaymentMethodOptions.Crypto,
+    try {
+      await stripeClient.paymentIntents.create(
+        {
+          amount: amountInCents,
+          currency: 'usd',
+          confirm: true,
+          payment_method_data: { type: 'crypto' },
+          payment_method_types: ['crypto'],
+          payment_method_options: {
+            // transaction_verification ships in the 2026-05-27.preview API
+            // version and is not yet in stripe-node's stable types
+            crypto: {
+              mode: 'transaction_verification',
+              transaction_verification_options: {
+                network: 'base',
+                transaction_hash: result.transaction,
+              },
+            } as Stripe.PaymentIntentCreateParams.PaymentMethodOptions.Crypto,
+          },
         },
-      },
-      { idempotencyKey: result.transaction }
-    );
+        { idempotencyKey: result.transaction }
+      );
+    } catch (error) {
+      // The payment already settled on-chain. Never fail the request over a
+      // recording error; log the transaction hash so it can be reconciled.
+      rest.logger?.error('stripe payment intent recording failed', {
+        transaction: result.transaction,
+        amountInCents,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   return x402;

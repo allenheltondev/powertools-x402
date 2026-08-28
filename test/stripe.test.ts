@@ -133,17 +133,20 @@ describe('createStripeX402', () => {
     const app = new Router<X402Environment>();
     app.post('/paid', [x402.paid({ price: '$0.01' })], async () => ({ foo: 'bar' }));
 
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errors: unknown[][] = [];
+    const consoleError = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
     const challenge = await app.resolve(apiGatewayEvent('POST', '/paid'), lambdaContext);
     const paymentHeaders = await payFor(challenge);
     const res = await app.resolve(apiGatewayEvent('POST', '/paid', paymentHeaders), lambdaContext);
     consoleError.mockRestore();
 
     expect(res.statusCode).toBe(200);
-    expect(consoleError).toHaveBeenCalledWith(
+    expect(errors).toContainEqual([
       'stripe payment intent recording failed',
-      expect.objectContaining({ transaction: '0xtransactionhash', amountInCents: 1 })
-    );
+      expect.objectContaining({ transaction: '0xtransactionhash', amountInCents: 1 }),
+    ]);
   });
 
   it('does not create a PaymentIntent when settlement fails', async () => {

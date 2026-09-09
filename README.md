@@ -16,7 +16,7 @@ Requires Node 18+. `@aws-lambda-powertools/event-handler` is a peer dependency, 
 
 - No payment attached? The caller gets a 402 with signed payment requirements
 - Payment attached? It gets verified with a facilitator before your handler runs
-- With the default exact payment flow, settlement happens after your handler succeeds. If the handler throws or returns an error status, settlement does not occur
+- With the default exact payment flow, settlement happens after your handler succeeds. If the handler throws or returns an error status, settlement does not occur. A `billable` predicate can also decline to charge for a response that succeeded
 - Verified payment details (payer, amount, network) are available in the request store
 
 One contract to understand before you ship: in the default exact flow, verify happens before your handler and settlement happens after. That's the right fit for work that can safely run before the money moves, like inference, generation, and data retrieval. It is not a transaction around your business logic. If your handler performs an irreversible side effect and settlement fails afterward, the work already happened. Keep that kind of work reversible or reconcilable, or handle it with your own orchestration.
@@ -76,7 +76,7 @@ const x402 = createX402({
 });
 ```
 
-This emits `PaymentRequired`, `PaymentRejected`, `PaymentVerified`, `PaymentSettled`, `PaymentCancelled`, and `SettlementFailed` counts under the `x402` namespace. Metrics publish immediately, so there's no `publishStoredMetrics()` call to remember. Pass your own `metrics` instance if you want a different namespace.
+This emits `PaymentRequired`, `PaymentRejected`, `PaymentVerified`, `PaymentSettled`, `PaymentCancelled`, `PaymentNotBillable`, and `SettlementFailed` counts under the `x402` namespace. Metrics publish immediately, so there's no `publishStoredMetrics()` call to remember. Pass your own `metrics` instance if you want a different namespace.
 
 ### Settle on mainnet with the Coinbase facilitator
 
@@ -161,6 +161,41 @@ x402.paid({
   },
 });
 ```
+
+### Decline to charge for a successful response
+
+Sometimes the work succeeds, the caller should get the payload, and you still don't want the money. A `billable` predicate runs after your handler on the path that would otherwise settle, and returning `false` skips settlement:
+
+```ts
+app.post(
+  '/extract',
+  [
+    x402.paid({
+      price: '$0.05',
+      billable: (response) =>
+        response
+          .json()
+          .then(({ fields }: { fields: Record<string, string> }) => Object.keys(fields).length > 0),
+    }),
+  ],
+  async (reqCtx) => {
+    const { document } = (await reqCtx.req.json()) as { document: string };
+    return { fields: await extractFields(document) };
+  }
+);
+```
+
+The caller gets their 200 and the empty result either way; they just aren't charged for it. The same shape covers an LLM route that returned a refusal, or a search that legitimately found nothing.
+
+It's all or nothing: `billable` decides whether to charge the full price, not how much to charge. If what you want is to bill less for cheaper work, that's partial settlement, which the `exact` scheme doesn't do.
+
+The predicate receives a clone of the handler's response, so reading its body is safe, plus the request context, so `reqCtx.get('payment')` is available. It may be async. Skipping settlement leaves the response exactly as your handler produced it, with no `PAYMENT-RESPONSE` receipt header.
+
+A skip counts a `PaymentNotBillable` metric, deliberately separate from `PaymentCancelled`, which stays reserved for handlers that threw or failed. An alarm on cancellations won't fire on a route declining to bill. A predicate that throws is treated as not billable and logged at error, so a broken predicate never turns a successful response into a 500.
+
+Note the direction: `billable` can only subtract a settlement, never add one. It isn't consulted at all when the handler throws or returns an error status, since those already skip settlement.
+
+It also only prevents a charge when the selected payment flow settles *after* the handler. The default `exact` authorization flow does, and that's what you get unless you ask for something else. But `exact` also supports the `upfront` flow, chosen with `extra: { paymentFlow: 'upfront' }` on an `accepts` entry, and `upfront` and `escrow` both settle before your handler runs. By the time `billable` returns `false` there, the money has already moved and nothing can unmake the charge. Rather than report a refund that never happened, the middleware ignores the `false`, settles as normal so the caller still gets the receipt they paid for, and logs at error.
 
 ### Customize the 402 response
 

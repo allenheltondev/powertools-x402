@@ -1,4 +1,4 @@
-import type { Middleware } from '@aws-lambda-powertools/event-handler/types';
+import type { Middleware, RequestContext } from '@aws-lambda-powertools/event-handler/types';
 import { Metrics } from '@aws-lambda-powertools/metrics';
 import {
   HTTPFacilitatorClient,
@@ -42,10 +42,23 @@ export interface CreateX402Options {
   metrics?: X402Metrics;
 }
 
+/**
+ * Decides whether a successful response should be charged for. Receives a
+ * clone of the handler's response, so reading its body is safe. Returning
+ * false skips settlement. Only prevents a charge when the selected payment
+ * flow settles after the handler, as the default exact authorization flow
+ * does; see the README for flows that settle before it.
+ */
+export type BillablePredicate = (
+  response: Response,
+  reqCtx: RequestContext<X402Environment>
+) => boolean | Promise<boolean>;
+
 export interface PaidRouteOptions extends Omit<RouteConfig, 'accepts'> {
   price?: Price;
   accepts?: PaymentOption | PaymentOption[];
   onProtectedRequest?: ProtectedRequestHook;
+  billable?: BillablePredicate;
 }
 
 export type PaymentInfo = {
@@ -89,6 +102,23 @@ export function createX402(options: CreateX402Options) {
   const count = (name: string) =>
     metrics && (metrics.singleMetric?.() ?? metrics).addMetric(name, 'Count', 1);
 
+  // A throwing predicate counts as not billable, so it can never turn a
+  // successful response into a 500.
+  const isBillable = async (
+    predicate: BillablePredicate,
+    reqCtx: RequestContext<X402Environment>,
+    path: string
+  ): Promise<boolean> => {
+    try {
+      // Clone so the predicate can read the body without consuming the
+      // response the caller gets.
+      return await predicate(reqCtx.res.clone(), reqCtx);
+    } catch (error) {
+      logger?.error('x402 billable predicate threw', { path, error });
+      return false;
+    }
+  };
+
   const payers = new WeakMap<object, string>();
   resourceServer.onAfterVerify(async ({ paymentPayload, result }) => {
     if (result.payer) payers.set(paymentPayload, result.payer);
@@ -103,7 +133,7 @@ export function createX402(options: CreateX402Options) {
    * has already happened.
    */
   function paid(route: PaidRouteOptions): Middleware<X402Environment> {
-    const { price, accepts, onProtectedRequest, ...routeConfig } = route;
+    const { price, accepts, onProtectedRequest, billable, ...routeConfig } = route;
     if (accepts === undefined && price === undefined) {
       throw new Error('paid() requires a price or an accepts configuration');
     }
@@ -190,6 +220,24 @@ export function createX402(options: CreateX402Options) {
           status: reqCtx.res.status,
         });
         return;
+      }
+
+      if (billable && !(await isBillable(billable, reqCtx, context.path))) {
+        if (beforeHandlerSettlement) {
+          // An upfront or escrow flow already moved the money, so skipping here
+          // would claim a refund that never happened. Settle as normal to echo
+          // the receipt the caller paid for, and make the mismatch loud.
+          logger?.error('x402 billable ignored: flow settles before the handler', {
+            path: context.path,
+          });
+        } else {
+          // Counted apart from PaymentCancelled: this is a route working as
+          // designed, not a failure, and alarms should tell them apart.
+          await cancellationDispatcher.cancel({ reason: 'after_verify_aborted' });
+          count('PaymentNotBillable');
+          logger?.warn('x402 payment not billed: route declined', { path: context.path });
+          return;
+        }
       }
 
       const settlement = await httpServer.processSettlement(

@@ -2,11 +2,9 @@ import { Router } from '@aws-lambda-powertools/event-handler/http';
 import type { HandlerResponse } from '@aws-lambda-powertools/event-handler/types';
 import type { Context } from 'aws-lambda';
 import { describe, expect, it, vi } from 'vitest';
-import { ExactEvmScheme } from '@x402/evm/exact/server';
 import {
   createX402,
   type BillablePredicate,
-  type SchemeRegistrar,
   type X402Environment,
 } from '../src/index.js';
 import { stubFacilitator, testPayer } from '../src/testing.js';
@@ -210,36 +208,36 @@ describe('billable predicate', () => {
 });
 
 describe('billable on a flow that settles before the handler', () => {
-  // Stock exact supports the upfront flow from @x402/evm 2.25.0, but the
-  // lockfile pins 2.23.0 where it is authorization-only, so bend a copy of it
-  // into an escrow flow to settle before the handler on either version.
-  const escrowFlow = { supported: ['escrow'], default: 'escrow' } as const;
-  const registerEscrowScheme = (server: Parameters<SchemeRegistrar>[0]) => {
-    const scheme = new ExactEvmScheme();
-    Object.defineProperty(scheme, 'paymentFlows', {
-      value: { eip3009: escrowFlow, permit2: escrowFlow },
-    });
-    server.register('eip155:*', scheme as never);
-  };
-
-  const setupEscrow = (billable: BillablePredicate) => {
+  // Stock exact supports the upfront flow, selected off the accepts entry --
+  // the same thing a user would write, and the reason this branch is reachable
+  // without a custom scheme.
+  const setupUpfront = (billable: BillablePredicate) => {
     const facilitator = stubFacilitator();
     const settle = vi.spyOn(facilitator, 'settle');
     const logger = { debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const x402 = createX402({
-      facilitator,
-      network,
-      payTo,
-      logger,
-      schemes: [registerEscrowScheme],
-    });
+    const x402 = createX402({ facilitator, network, payTo, logger });
     const app = new Router<X402Environment>();
-    app.post('/answer', [x402.paid({ price: '$0.05', billable })], async () => ({ answer: '42' }));
+    app.post(
+      '/answer',
+      [
+        x402.paid({
+          accepts: {
+            scheme: 'exact',
+            network,
+            payTo,
+            price: '$0.05',
+            extra: { paymentFlow: 'upfront' },
+          },
+          billable,
+        }),
+      ],
+      async () => ({ answer: '42' })
+    );
     return { app, settle, logger };
   };
 
   it('settles anyway and logs, rather than claiming a refund it never made', async () => {
-    const { app, settle, logger } = setupEscrow(() => false);
+    const { app, settle, logger } = setupUpfront(() => false);
 
     const res = await callPaid(app);
 

@@ -2,7 +2,13 @@ import { Router } from '@aws-lambda-powertools/event-handler/http';
 import type { HandlerResponse } from '@aws-lambda-powertools/event-handler/types';
 import type { Context } from 'aws-lambda';
 import { describe, expect, it, vi } from 'vitest';
-import { createX402, type BillablePredicate, type X402Environment } from '../src/index.js';
+import { ExactEvmScheme } from '@x402/evm/exact/server';
+import {
+  createX402,
+  type BillablePredicate,
+  type SchemeRegistrar,
+  type X402Environment,
+} from '../src/index.js';
 import { stubFacilitator, testPayer } from '../src/testing.js';
 
 const network = 'eip155:84532';
@@ -200,5 +206,54 @@ describe('billable predicate', () => {
     expect(settle).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body as string)).toEqual({ answer: '42' });
+  });
+});
+
+describe('billable on a flow that settles before the handler', () => {
+  // The exact scheme is authorization-flow, so bend one copy of it into an
+  // escrow flow to exercise the branch no shipped scheme reaches yet.
+  const escrowFlow = { supported: ['escrow'], default: 'escrow' } as const;
+  const registerEscrowScheme = (server: Parameters<SchemeRegistrar>[0]) => {
+    const scheme = new ExactEvmScheme();
+    Object.defineProperty(scheme, 'paymentFlows', {
+      value: { eip3009: escrowFlow, permit2: escrowFlow },
+    });
+    server.register('eip155:*', scheme as never);
+  };
+
+  const setupEscrow = (billable: BillablePredicate) => {
+    const facilitator = stubFacilitator();
+    const settle = vi.spyOn(facilitator, 'settle');
+    const logger = { debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const x402 = createX402({
+      facilitator,
+      network,
+      payTo,
+      logger,
+      schemes: [registerEscrowScheme],
+    });
+    const app = new Router<X402Environment>();
+    app.post('/answer', [x402.paid({ price: '$0.05', billable })], async () => ({ answer: '42' }));
+    return { app, settle, logger };
+  };
+
+  it('settles anyway and logs, rather than claiming a refund it never made', async () => {
+    const { app, settle, logger } = setupEscrow(() => false);
+
+    const res = await callPaid(app);
+
+    expect(res.statusCode).toBe(200);
+    // The money already moved before the handler ran, so the caller still gets
+    // their receipt instead of a silently unsettled payment.
+    expect(settle).toHaveBeenCalled();
+    expect(res.headers?.['payment-response']).toBeDefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('settles before the handler'),
+      expect.objectContaining({ path: '/answer' })
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('not billed'),
+      expect.anything()
+    );
   });
 });

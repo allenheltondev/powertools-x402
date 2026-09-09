@@ -45,7 +45,8 @@ export interface CreateX402Options {
 /**
  * Decides whether a successful response should be charged for. Receives a
  * clone of the handler's response, so reading its body is safe. Returning
- * false skips settlement.
+ * false skips settlement. Only meaningful for flows that settle after the
+ * handler, which is every scheme x402 ships today.
  */
 export type BillablePredicate = (
   response: Response,
@@ -221,12 +222,21 @@ export function createX402(options: CreateX402Options) {
       }
 
       if (billable && !(await isBillable(billable, reqCtx, context.path))) {
-        // Counted apart from PaymentCancelled: this is a route working as
-        // designed, not a failure, and alarms should be able to tell them apart.
-        await cancellationDispatcher.cancel({ reason: 'after_verify_aborted' });
-        count('PaymentNotBillable');
-        logger?.warn('x402 payment not billed: route declined', { path: context.path });
-        return;
+        if (beforeHandlerSettlement) {
+          // An upfront or escrow flow already moved the money, so skipping here
+          // would claim a refund that never happened. Settle as normal to echo
+          // the receipt the caller paid for, and make the mismatch loud.
+          logger?.error('x402 billable ignored: flow settles before the handler', {
+            path: context.path,
+          });
+        } else {
+          // Counted apart from PaymentCancelled: this is a route working as
+          // designed, not a failure, and alarms should tell them apart.
+          await cancellationDispatcher.cancel({ reason: 'after_verify_aborted' });
+          count('PaymentNotBillable');
+          logger?.warn('x402 payment not billed: route declined', { path: context.path });
+          return;
+        }
       }
 
       const settlement = await httpServer.processSettlement(

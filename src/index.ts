@@ -45,8 +45,9 @@ export interface CreateX402Options {
 /**
  * Decides whether a successful response should be charged for. Receives a
  * clone of the handler's response, so reading its body is safe. Returning
- * false skips settlement. Only meaningful for flows that settle after the
- * handler, which is every scheme x402 ships today.
+ * false skips settlement. Only prevents a charge when the selected payment
+ * flow settles after the handler, as the default exact authorization flow
+ * does; see the README for flows that settle before it.
  */
 export type BillablePredicate = (
   response: Response,

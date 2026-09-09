@@ -210,8 +210,9 @@ describe('billable predicate', () => {
 });
 
 describe('billable on a flow that settles before the handler', () => {
-  // The exact scheme is authorization-flow, so bend one copy of it into an
-  // escrow flow to exercise the branch no shipped scheme reaches yet.
+  // Stock exact supports the upfront flow from @x402/evm 2.25.0, but the
+  // lockfile pins 2.23.0 where it is authorization-only, so bend a copy of it
+  // into an escrow flow to settle before the handler on either version.
   const escrowFlow = { supported: ['escrow'], default: 'escrow' } as const;
   const registerEscrowScheme = (server: Parameters<SchemeRegistrar>[0]) => {
     const scheme = new ExactEvmScheme();

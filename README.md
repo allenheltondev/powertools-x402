@@ -195,7 +195,7 @@ A skip counts a `PaymentNotBillable` metric, deliberately separate from `Payment
 
 Note the direction: `billable` can only subtract a settlement, never add one. It isn't consulted at all when the handler throws or returns an error status, since those already skip settlement.
 
-It also only works on flows that settle *after* the handler. That's every scheme x402 ships today, including `exact` and `upto`, which are all authorization-flow. If you register a custom scheme with an `upfront` or `escrow` flow, the money moves before your handler runs, so a `false` at that point can't unmake the charge. Rather than report a refund that never happened, the middleware settles as normal, echoes the receipt the caller paid for, and logs at error.
+It also only prevents a charge when the selected payment flow settles *after* the handler. The default `exact` authorization flow does, and that's what you get unless you ask for something else. But `exact` also supports the `upfront` flow, chosen with `extra: { paymentFlow: 'upfront' }` on an `accepts` entry, and `upfront` and `escrow` both settle before your handler runs. By the time `billable` returns `false` there, the money has already moved and nothing can unmake the charge. Rather than report a refund that never happened, the middleware ignores the `false`, settles as normal so the caller still gets the receipt they paid for, and logs at error.
 
 ### Customize the 402 response
 
